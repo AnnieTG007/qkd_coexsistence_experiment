@@ -1,0 +1,12 @@
+numpy>=1.26.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+pyserial>=3.5
+pyvisa>=1.13.0
+paramiko>=3.0.0
+matplotlib>=3.7.0
+PySide6>=6.5.0
+tqdm>=4.65.0
+scipy>=1.11.0
+statsmodels>=0.14.0
