@@ -5,7 +5,9 @@ import datetime
 import time
 from openpyxl import Workbook
 from pathlib import Path
+from scipy import constants
 
+import config
 from tools.count_down import countdown
 import device
 import simulation
@@ -23,7 +25,7 @@ INV_TIME = 2400
 # QKD等待时间（单位：秒），密钥量不够时的单位等待时间
 wait_time = 600
 
-with xlrd.open_workbook('Ramancrosssection25GHz（25GHz间隔）.xls') as f:
+with xlrd.open_workbook('simulation/Ramancrosssection25GHz（25GHz间隔）.xls') as f:
     sheet1 = f.sheets()[0]
     sheet1_cols = sheet1.col_values(1)
     coefficient_raman = np.array(sheet1_cols)  # 拉曼散射系数
@@ -108,12 +110,10 @@ def SKR_simulation(c_list, fq=193.5e12):
     noise2 = mcf.get_fwm_power_all3(c_list, p, np.array([fq]), func2, z)[1]
 
     spd_eff = 0.1  # 探测效率为10%
-    Planck_constant = 6.62607015 * 10 ** (-34)  # 普朗克常量J·s
     IL = 8  # DWDM插入损耗(8dB)
     gate_time = 1 * 10 ** (-9)  # 探测时间可以为2010 ps，即2.01 ns，也可以是1 ns，这个根据实验去改就是了
     work_wave = 1550 * 1e-9  # 等效工作波长
-    c_v = 299792458  # 光速m/s
-    noise = (noise1 + noise2) * work_wave * gate_time * spd_eff * 10 ** (-0.1 * IL) / (Planck_constant * c_v)
+    noise = (noise1 + noise2) * work_wave * gate_time * spd_eff * 10 ** (-0.1 * IL) / (constants.Planck * constants.c)
     skr, qber = simulation.BB84_SKR_finite(DISTANCE, noise)
     return skr, qber
 
@@ -152,8 +152,9 @@ if __name__ == "__main__":
         scheme_name_list = scheme_name_list + a
 
     # 初始化WSS过程
-    list_att_initial = np.zeros((2, 2, 20))
-    wss1 = device.WSS('COM5', 'COM6', list_att_initial)
+    cfg = config.get_config()
+    list_att_initial = np.array(cfg.device.wss.list_att_initial)
+    wss1 = device.WSS(cfg.device.wss.com_power, cfg.device.wss.com_control, list_att_initial)
     # WSS设备开机
     response = wss1.wsspower('on')
     # WSS设备所用的端口号
@@ -167,7 +168,7 @@ if __name__ == "__main__":
     wss1.wss_spa_bandwidth(2, fsyn, 100e9, 1, 2, 0)
 
     # 初始化TLS过程
-    tls1 = device.TLS('192.168.1.102', '192.168.1.101')
+    tls1 = device.TLS(cfg.device.tls.mtp_ip, cfg.device.tls.iqs_ip)
     # tls所用的端口号
     tls_port = np.arange(1, num_c+1)
     # TLS设备开机
@@ -249,7 +250,7 @@ if __name__ == "__main__":
         dir_path = Path(__file__).resolve().parent / dir_name
         dir_path.mkdir(parents=True, exist_ok=True)
         # 保存OSA图像
-        # device.save_current_image(dir_path, i+1)
+        device.save_current_image(dir_path, i+1)
 
         # 从QKD设备获取SKR数据
         log_file_path = Path(__file__).resolve().parent / 'log'
