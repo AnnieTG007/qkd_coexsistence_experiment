@@ -107,16 +107,35 @@ class OpticalSpectrumAnalyzer:
 
     # ── 私有：扫频辅助 ────────────────────────────────────────────────
 
-    def _sweep_and_wait(self, start_freq: float, end_freq: float) -> None:
-        """设置频率范围（Hz → nm）并执行一次单次扫频，等待完成。"""
-        # Hz → nm: lambda = c / f
-        start_nm = constants.c / start_freq * 1e9
-        end_nm = constants.c / end_freq * 1e9
+    def _sweep_and_wait(self, start_freq: float, end_freq: float,
+                        resolution_nm: float | None = None) -> None:
+        """设置频率范围（Hz）并执行一次单次扫频，等待完成。
 
+        Args:
+            start_freq: 起始频率 (Hz)，例如 191.3e12
+            end_freq:    结束频率 (Hz)，例如 196.5e12
+            resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
+
+        Note:
+            OSA 频率命令格式为 :SENSe:WAVelength:STARt {freq}[HZ]，直接接受 Hz 值无需 c/f 转换。
+            横坐标切换为频率显示 :UNIT:X FREQuency。
+        """
         self.send_command("*CLS", False)
         time.sleep(0.3)
-        self.send_command(f":SENSe:WAVelength:STARt {start_nm}E-9", False)
-        self.send_command(f":SENSe:WAVelength:STOP {end_nm}E-9", False)
+
+        # 频率扫描：直接发送 Hz 值，无需 c/f 转换
+        self.send_command(f":SENSe:WAVelength:STARt {start_freq}[HZ]", False)
+        self.send_command(f":SENSe:WAVelength:STOP {end_freq}[HZ]", False)
+
+        # 横坐标设为频率显示（THz）
+        self.send_command(":UNIT:X FREQuency", False)
+
+        # 分辨率设置（AQ6370D 范围：0.05nm ~ 2.0nm）
+        if resolution_nm is not None:
+            if not (0.05 <= resolution_nm <= 2.0):
+                raise ValueError(f"分辨率必须在 0.05~2.0nm 范围内，当前值: {resolution_nm}nm")
+            self.send_command(f":SENSe:BANDwidth:RESolution {resolution_nm}", False)
+
         self.send_command(":SENSe:SWEep:POINts:AUTO OFF", False)
         self.send_command(":SENSe:SWEep:POINts 1001", False)
         self.send_command(":FORMAT:DATA ASCII", False)
@@ -164,7 +183,8 @@ class OpticalSpectrumAnalyzer:
     # ── 公开API ──────────────────────────────────────────────────────
 
     def save_spectrum_data(self, start_freq: float, end_freq: float,
-                           save_dir: str = './data', name_prefix: str = 'spectrum') -> str:
+                           save_dir: str = './data', name_prefix: str = 'spectrum',
+                           resolution_nm: float | None = None) -> str:
         """执行一次扫频并将频谱数据保存为 CSV 文件。
 
         Args:
@@ -172,6 +192,7 @@ class OpticalSpectrumAnalyzer:
             end_freq:    结束频率 (Hz)，例如 196.5e12
             save_dir:    保存目录
             name_prefix: 文件名前缀
+            resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
 
         Returns:
             保存的文件路径（字符串）
@@ -180,7 +201,7 @@ class OpticalSpectrumAnalyzer:
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
 
-        self._sweep_and_wait(start_freq, end_freq)
+        self._sweep_and_wait(start_freq, end_freq, resolution_nm)
         time.sleep(1.0)
 
         wl_nm = self._get_wavelength_nm()
@@ -312,18 +333,25 @@ class OpticalSpectrumAnalyzer:
         return str(local_path)
 
 
-def save_current_image(path_dir='../data', name_id=1):
-    """保存 OSA 频谱数据（CSV）以及屏幕图像（PNG）的便捷 CLI 函数。"""
+def save_current_image(path_dir='../data', name_id=1, resolution_nm: float | None = None):
+    """保存 OSA 频谱数据（CSV）以及屏幕图像（PNG）的便捷 CLI 函数。
+
+    Args:
+        path_dir: 保存目录
+        name_id: 文件编号
+        resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
+    """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import config as cfg_module
     cfg = cfg_module.get_config()
     with OpticalSpectrumAnalyzer(osa_ip=cfg.device.osa.ip, osa_port=cfg.device.osa.port) as osa:
         csv_path = osa.save_spectrum_data(
-            start_freq=191.3e12,
-            end_freq=191.5e12,
+            start_freq=191.25e12,
+            end_freq=191.35e12,
             save_dir=path_dir,
-            name_prefix=f'spectrum_{name_id}'
+            name_prefix=f'spectrum_{name_id}',
+            resolution_nm=resolution_nm
         )
         print("频谱已保存:", csv_path)
         img_path = osa.save_screen_image(
@@ -335,4 +363,4 @@ def save_current_image(path_dir='../data', name_id=1):
 
 
 if __name__ == '__main__':
-    save_current_image()
+    save_current_image('../data/spectrum', 1, resolution_nm=0.05)

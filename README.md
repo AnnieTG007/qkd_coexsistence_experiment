@@ -69,7 +69,10 @@ python gui/channel_viewer.py
 
 - WSS (波长选择开关) - 串口控制
 - TLS (可调谐激光源) - 以太网控制
-- OSA (光谱分析仪) - 以太网控制
+- OSA (光谱分析仪) - 以太网控制，型号 Yokogawa AQ6370D
+  - **分辨率范围**：0.05nm ~ 2.0nm（通过 `:SENSe:BANDwidth:RESolution` 设置）
+  - **扫频模式**：支持直接以频率（Hz）为单位扫频（`:SENSe:WAVelength:STARt {freq}[HZ]`）
+  - **横坐标显示**：可切换为频率（`:UNIT:X FREQuency`）
 - ASE 源 - 串口控制
 - QKD 系统 - SFTP 访问
 
