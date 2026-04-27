@@ -1,19 +1,22 @@
 import socket
+import re
 import pandas as pd
-import numpy as np
 import time
 from pathlib import Path
-from scipy import constants
+import numpy as np
 
+def val(string):
+    match = re.match(r"[-+]?\d*\.?\d+", string)
+    return float(match.group()) if match else 0
 
 class OpticalSpectrumAnalyzer:
-    def __init__(self, osa_ip, osa_port, Timeout=5, Terminator='\r\n', InputBufferSize=1024):
+    def __init__(self, osa_ip, osa_port, Timeout = 5, Terminator = '\r\n', InputBufferSize=1024):
         self._client = None
         self.serverip = osa_ip
         self.port = osa_port
         self.timeout = Timeout
         self.terminator = Terminator
-        self.buffersize = InputBufferSize
+        self.buffer_size = InputBufferSize
 
     def tcp_connect(self):
         if self._client is not None:
@@ -21,8 +24,11 @@ class OpticalSpectrumAnalyzer:
         self._client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._client.settimeout(self.timeout)
         try:
+            # 连接到服务器(需要指定IP地址和端口)
             self._client.connect((self.serverip, self.port))
+            # print(f'已连接到 {self.serverip} --port:{self.port}')
             self.login(self._client)
+            # print('---------- OSA控制和查询阶段 ----------')
         except Exception as e:
             self.disconnect()
             raise ConnectionError(f'ERROR 连接or登录 失败: {e}')
@@ -31,8 +37,12 @@ class OpticalSpectrumAnalyzer:
         if self._client:
             self._client.close()
             self._client = None
+            # print('连接 已关闭')
 
     def send_command(self, command: str, expect_response: bool = True, timeout: float | None = None) -> str:
+        """
+        发送 SCPI 命令。支持对单条命令临时指定 timeout（秒）。
+        """
         if not command.endswith("\n"):
             command += "\n"
 
@@ -41,190 +51,29 @@ class OpticalSpectrumAnalyzer:
             old_timeout = self._client.gettimeout()
             self._client.settimeout(timeout)
 
-        chunks = []
         try:
             self._client.sendall(command.encode())
 
             if not expect_response:
-                return b"".join(chunks).decode(errors='ignore').strip()
+                return ""
 
+            # 典型 SCPI 响应都很短，但仍建议读到 '\n'
+            chunks = []
             while True:
-                data = self._client.recv(self.buffersize)
+                data = self._client.recv(self.buffer_size)
                 if not data:
                     break
                 chunks.append(data)
-                # OSA 以 \r\n 结尾，收到换行符或连接关闭即表明响应完整
                 if b"\n" in data:
                     break
 
-            return b"".join(chunks).decode(errors='ignore').strip()
+            return b"".join(chunks).decode(errors="ignore").strip()
 
-        except socket.timeout:
-            # 超时不代表发送失败（如 *CLS 无响应），返回已收到的碎片
-            return b"".join(chunks).decode(errors='ignore').strip()
         except Exception as e:
             raise IOError(f"命令 '{command.strip()}' 发送失败: {e}") from e
         finally:
             if old_timeout is not None:
                 self._client.settimeout(old_timeout)
-
-    def login(self, client):
-        try:
-            resp = self.send_command('OPEN "anonymous"', True, timeout=5.0)
-            print(f"LOGIN resp: {resp!r}")
-            if 'AUTHENTICATE' in resp:
-                self._client.sendall(b"AUTHENTICATE NONE\n")
-                # 认证成功后会收到 ready，先等待一会再清空
-                time.sleep(3.0)
-                # 清空缓冲区
-                self._client.settimeout(3.0)
-                buf = b''
-                try:
-                    while True:
-                        d = self._client.recv(4096)
-                        if not d:
-                            break
-                        buf += d
-                except socket.timeout:
-                    pass
-                finally:
-                    self._client.settimeout(self.timeout)
-                print(f"After AUTHENTICATE NONE buf: {buf!r}")
-                # 清除 OSA 命令处理状态
-                self.send_command("*CLS", expect_response=False)
-                time.sleep(1.0)
-        except Exception as e:
-            print(f"LOGIN error: {e}")
-        time.sleep(0.5)
-
-    def __enter__(self):
-        self.tcp_connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disconnect()
-        return False
-
-    # ── 私有：扫频辅助 ────────────────────────────────────────────────
-
-    def _sweep_and_wait(self, start_freq: float, end_freq: float,
-                        resolution_nm: float | None = None) -> None:
-        """设置频率范围（Hz）并执行一次单次扫频，等待完成。
-
-        Args:
-            start_freq: 起始频率 (Hz)，例如 191.3e12
-            end_freq:    结束频率 (Hz)，例如 196.5e12
-            resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
-
-        Note:
-            OSA 频率命令格式为 :SENSe:WAVelength:STARt {freq}[HZ]，直接接受 Hz 值无需 c/f 转换。
-            横坐标切换为频率显示 :UNIT:X FREQuency。
-        """
-        self.send_command("*CLS", False)
-        time.sleep(0.3)
-
-        # 频率扫描：直接发送 Hz 值，无需 c/f 转换
-        self.send_command(f":SENSe:WAVelength:STARt {start_freq}[HZ]", False)
-        self.send_command(f":SENSe:WAVelength:STOP {end_freq}[HZ]", False)
-
-        # 横坐标设为频率显示（THz）
-        self.send_command(":UNIT:X FREQuency", False)
-
-        # 分辨率设置（AQ6370D 范围：0.05nm ~ 2.0nm）
-        if resolution_nm is not None:
-            if not (0.05 <= resolution_nm <= 2.0):
-                raise ValueError(f"分辨率必须在 0.05~2.0nm 范围内，当前值: {resolution_nm}nm")
-            self.send_command(f":SENSe:BANDwidth:RESolution {resolution_nm}", False)
-
-        self.send_command(":SENSe:SWEep:POINts:AUTO OFF", False)
-        self.send_command(":SENSe:SWEep:POINts 1001", False)
-        self.send_command(":FORMAT:DATA ASCII", False)
-        self.send_command(":TRACE:ACTIVE TRA", False)
-        self.send_command(":INITiate:SMODe SINGle", False)
-        self.send_command("*CLS", False)
-        self.send_command(":INITiate", False)
-
-        t0 = time.time()
-        while True:
-            self.send_command(":STATus:OPERation:EVENt?", True, 2.0)  # 清除残留
-            resp = self.send_command(":STATus:OPERation:EVENt?", True, 2.0)
-            try:
-                if int(float(resp)) == 0:
-                    break
-            except Exception:
-                pass
-            if time.time() - t0 > 120:
-                raise TimeoutError("OSA sweep timeout (>120s)")
-            time.sleep(0.5)
-
-    def _get_wavelength_nm(self) -> np.ndarray:
-        """获取当前 trace 的波长数组（单位：nm）。
-
-        OSA :TRACe[:DATA]:X? 返回波长数据，单位为米（m）。
-        """
-        self.send_command(":TRACe:DATA:SNUMber? TRA", True, 5.0)  # 清除残留
-        snum_resp = self.send_command(":TRACe:DATA:SNUMber? TRA", True, 10.0)
-        snum = int(float(snum_resp)) if snum_resp.strip() else 0
-        if snum == 0:
-            raise IOError("OSA trace 数据为空（0 点），请确认扫频范围和光学信号")
-
-        self.send_command(":TRACe:DATA:X? TRA", True, 5.0)  # 清除残留
-        raw = self.send_command(":TRACe:DATA:X? TRA", True, 30.0)
-        # OSA 返回米（m），转为 nm（×1e9）
-        values_m = np.array([float(v) for v in raw.split(',') if v.strip()])
-        return values_m * 1e9
-
-    def _get_trace_data(self) -> np.ndarray:
-        """获取当前 trace 的功率谱数组（dBm）。"""
-        self.send_command(":TRACe:DATA:Y? TRA", True, 5.0)  # 清除残留
-        raw = self.send_command(":TRACe:DATA:Y? TRA", True, 30.0)
-        return np.array([float(v) for v in raw.split(',') if v.strip()])
-
-    # ── 公开API ──────────────────────────────────────────────────────
-
-    def save_spectrum_data(self, start_freq: float, end_freq: float,
-                           save_dir: str = './data', name_prefix: str = 'spectrum',
-                           resolution_nm: float | None = None) -> str:
-        """执行一次扫频并将频谱数据保存为 CSV 文件。
-
-        Args:
-            start_freq: 起始频率 (Hz)，例如 191.5e12
-            end_freq:    结束频率 (Hz)，例如 196.5e12
-            save_dir:    保存目录
-            name_prefix: 文件名前缀
-            resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
-
-        Returns:
-            保存的文件路径（字符串）
-        """
-        import datetime
-        save_path = Path(save_dir)
-        save_path.mkdir(parents=True, exist_ok=True)
-
-        self._sweep_and_wait(start_freq, end_freq, resolution_nm)
-        time.sleep(1.0)
-
-        wl_nm = self._get_wavelength_nm()
-        trace = self._get_trace_data()
-
-        if wl_nm.shape != trace.shape:
-            raise ValueError(f"波长与功率数据长度不一致: {wl_nm.shape} vs {trace.shape}")
-
-        # 计算对应的频率 THz
-        freq_thz = constants.c / (wl_nm * 1e-9) * 1e-12
-
-        ts = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-        filename = f"{name_prefix}_{ts}.csv"
-        filepath = save_path / filename
-
-        df = pd.DataFrame({
-            'wavelength_nm': wl_nm,
-            'frequency_THz': freq_thz,
-            'power_dBm': trace
-        })
-        df.to_csv(filepath, index=False)
-        print(f"[OSA] 频谱数据已保存: {filepath}")
-        return str(filepath)
 
     def _recv_until(self, predicate, chunk_size: int = 4096, max_bytes: int = 2_000_000) -> bytes:
         """Receive bytes until predicate(buffer) is True or max_bytes exceeded."""
@@ -254,6 +103,7 @@ class OpticalSpectrumAnalyzer:
         if self._client is None:
             raise ConnectionError("ERROR 未连接到设备，请先连接!!!")
 
+        # 发送查询命令
         self._client.sendall((command + self.terminator).encode())
 
         # 先拿到 '#' 和长度字段
@@ -269,6 +119,7 @@ class OpticalSpectrumAnalyzer:
         if n_digits <= 0:
             raise IOError(f"二进制块长度位数非法: {n_digits}")
 
+        # 确保已收齐长度字符串
         need = 2 + n_digits
         if len(header) < need:
             header += self._recv_exact(need - len(header), chunk_size=chunk_size)
@@ -276,6 +127,7 @@ class OpticalSpectrumAnalyzer:
         size_str = header[2:2 + n_digits].decode(errors='strict')
         data_len = int(size_str)
 
+        # header 后面可能已经带了一部分数据
         data_start = 2 + n_digits
         already = len(header) - data_start
         data = bytearray()
@@ -285,82 +137,279 @@ class OpticalSpectrumAnalyzer:
         if already < data_len:
             data.extend(self._recv_exact(data_len - already, chunk_size=chunk_size))
 
+        # 设备一般会在块后附加 terminator（LF/EOI），这里不强制读取/剥离
         return bytes(data)
 
-    def save_screen_image(self, save_dir: str = '../data',
-                          name_prefix: str = 'osa_screen',
-                          color: bool = True,
-                          fmt: str = "bmp",
-                          storage: str = "int") -> str:
-        """截取并保存 OSA 屏幕图像。
+    def save_current_image(self,
+                           save_dir=None,
+                           basename=None,
+                           color: bool = True,
+                           fmt: str = "bmp",
+                           storage: str = "int") -> str:
+        """保存当前屏幕图像到本机，并返回保存路径。
 
-        依据用户手册：先用 :MMEM:STOR:GRAP 保存图像到仪器内存，
-        再用 :MMEM:DATA? 配合 query_binary_block 读取文件数据。
-
-        Args:
-            save_dir:    保存目录
-            name_prefix: 文件名前缀（不含扩展名）
-            color:       是否彩色（True=color, False=mono）
-            fmt:         图像格式（bmp/png 等）
-            storage:     存储位置（int/EXT）
-
-        Returns:
-            保存的文件路径（字符串）
-        """
-        import datetime
-        save_path = Path(save_dir)
-        save_path.mkdir(parents=True, exist_ok=True)
+        依据用户手册示例：先用 :MMEM:STOR:GRAP 保存图像到仪器内存，再用 :MMEM:DATA? 读回文件数据。"""
+        if basename is None:
+            basename = time.strftime("osa_screen_%Y%m%d_%H%M%S")
 
         ext = fmt.lower().lstrip('.')
-        storage_arg = storage.lower()
+        storage = storage.lower()
 
         # 1) 在仪器侧生成文件（不带扩展名）
         color_arg = "color" if color else "mono"
-        self.send_command(
-            f':MMEM:STOR:GRAP {color_arg},{ext},"{name_prefix}",{storage_arg}',
-            expect_response=False
-        )
+        self.send_command(f':MMEM:STOR:GRAP {color_arg},{ext},"{basename}",{storage}', expect_response=False)
 
-        # 2) 用 query_binary_block 读取二进制数据
-        remote_name = f"{name_prefix}.{ext}"
-        image_data = self.query_binary_block(f':MMEM:DATA? "{remote_name}",{storage_arg}')
+        # 2) 读回文件二进制（带扩展名）
+        remote_name = f"{basename}.{ext}"
+        data = self.query_binary_block(f':MMEM:DATA? "{remote_name}",{storage}')
 
-        # 3) 写入本机目录
-        local_path = save_path / remote_name
-        local_path.write_bytes(image_data)
+        # 3) 写入本机 data/ 目录
+        if save_dir is None:
+            save_dir_path = (Path(__file__).resolve().parent / "data")
+        else:
+            save_dir_path = Path(save_dir).expanduser().resolve()
 
-        print(f"[OSA] 屏幕图像已保存: {local_path} ({len(image_data)} bytes)")
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+        local_path = save_dir_path / remote_name
+        local_path.write_bytes(data)
         return str(local_path)
 
+    def auto_sweep(self, max_wait_s: float = 60.0, poll_interval_s: float = 0.2):
+        """
+        AUTO sweep: 设置 AUTO 模式 + 发起 sweep + 轮询等待结束
+        """
+        self.send_command(":INITiate:SMODe AUTO", expect_response=False)
+        self.send_command("*CLS", expect_response=False)
+        self.send_command(":INITiate", expect_response=False)
 
-def save_current_image(path_dir='../data', name_id=1, resolution_nm: float | None = None):
-    """保存 OSA 频谱数据（CSV）以及屏幕图像（PNG）的便捷 CLI 函数。
+        t0 = time.time()
+        while True:
+            # 轮询事件寄存器（返回很快，不会长时间阻塞）
+            resp = self.send_command(":STAT:OPER:EVEN?", expect_response=True, timeout=2.0)
+            try:
+                if int(float(resp)) != 0:
+                    break
+            except Exception:
+                # 偶发非数字，忽略继续
+                pass
 
-    Args:
-        path_dir: 保存目录
-        name_id: 文件编号
-        resolution_nm: 分辨率 (nm)，AQ6370D 范围 0.05nm ~ 2.0nm，None 表示不修改
-    """
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            if time.time() - t0 > max_wait_s:
+                # 超时后做两件事：读一下错误队列，便于定位；然后兜底改单次扫
+                err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0)
+                raise TimeoutError(f"AUTO sweep 等待超过 {max_wait_s}s，最后错误队列: {err}")
+
+            time.sleep(poll_interval_s)
+
+    def wdm_analyze(self, dmask_db: float = -999):
+        """
+        执行 WDM analysis，并让仪器切换到 WDM 分析结果显示。
+        dmask_db: 通道检测门限；-999 表示关闭 mask（手册定义）。
+        """
+        # 1) 选择 WDM 分析类别
+        self.send_command(":CALCulate:CATegory WDM", expect_response=False)
+
+        # 2) 可选：设置 WDM 通道 mask 阈值（低于该阈值的峰不识别为信道）
+        # -999 表示 Mask OFF
+        self.send_command(f":CALCulate:PARameter:WDM:DMASk {dmask_db}DB", expect_response=False)
+
+        # 3) 执行分析
+        self.send_command(":CALCulate", expect_response=False)
+        return
+
+    def _measure_bandwidth(self, wavelengths: np.ndarray, powers: np.ndarray,
+                          ref_power: float, threshold_db: float) -> tuple[float, float, float]:
+        """
+        测量指定衰减值对应的带宽。
+
+        参数:
+            wavelengths: 波长数组 (m)
+            powers: 功率数组 (dBm)
+            ref_power: 参考功率 (dBm)，通常为峰值功率
+            threshold_db: 衰减值 (dB)，如 3 表示 peak - 3dB
+
+        返回:
+            (low_freq, high_freq, bandwidth)
+            其中 freq 单位为 Hz
+        """
+        threshold_power = ref_power - threshold_db
+
+        # 找到超过阈值的区间
+        above_threshold = powers >= threshold_power
+
+        if not np.any(above_threshold):
+            return 0.0, 0.0, 0.0
+
+        # 找到第一个和最后一个超过阈值的索引
+        indices = np.where(above_threshold)[0]
+        low_idx = indices[0]
+        high_idx = indices[-1]
+
+        # 转换波长为频率 (Hz)
+        c = 299792458  # 光速 m/s
+        low_freq = c / wavelengths[low_idx]
+        high_freq = c / wavelengths[high_idx]
+        bandwidth = high_freq - low_freq
+
+        return low_freq, high_freq, bandwidth
+
+    def save_spectrum_data(self,
+                          start_freq: float,
+                          end_freq: float,
+                          save_dir: str | None = None,
+                          basename: str | None = None,
+                          sweep_points: int | None = None) -> dict:
+        """
+        执行光谱扫描，保存频谱数据、图像，并测量3dB/30dB带宽。
+
+        参数:
+            start_freq: 起始频率 (Hz)，如 191.5e12
+            end_freq: 结束频率 (Hz)，如 193.5e12
+            save_dir: 保存目录，默认为 data/spectrum
+            basename: 文件名前缀，默认为 spectrum_YYYYMMDD_HHMMSS
+            sweep_points: 扫描点数，None 表示使用仪器当前设置
+
+        返回:
+            dict: {
+                'spectrum_csv': str,      # 频谱数据文件路径
+                'image_bmp': str,          # 频谱图像文件路径
+                'bandwidth_csv': str,      # 带宽测量结果文件路径
+                'peak_power': float,       # 峰值功率 (dBm)
+                'peak_freq': float,        # 峰值频率 (Hz)
+                '3dB_bandwidth': float,   # 3dB 带宽 (Hz)
+                '30dB_bandwidth': float,  # 30dB 带宽 (Hz)
+            }
+        """
+        if save_dir is None:
+            save_dir_path = Path(__file__).resolve().parent / "data" / "spectrum"
+        else:
+            save_dir_path = Path(save_dir).expanduser().resolve() / "spectrum"
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+
+        if basename is None:
+            basename = time.strftime("spectrum_%Y%m%d_%H%M%S")
+
+        trace_name = "TRA"
+
+        # 1. 设置扫描范围（按手册全称写法）
+        self.send_command(f":SENSe:WAVelength:STARt {start_freq}HZ", expect_response=False)
+        self.send_command(f":SENSe:WAVelength:STOP {end_freq}HZ", expect_response=False)
+
+        # 2. 设置扫描点数（可选）
+        if sweep_points is not None:
+            self.send_command(f":SENSe:SWEep:POINts {sweep_points}", expect_response=False)
+
+        # 3. 启动扫描
+        self.send_command(":INITiate:SMODe AUTO", expect_response=False)
+        self.send_command("*CLS", expect_response=False)
+        self.send_command(":INITiate", expect_response=False)
+
+        # 4. 等待扫描完成
+        t0 = time.time()
+        max_wait_s = 120.0
+        while True:
+            resp = self.send_command(":STAT:OPER:EVEN?", expect_response=True, timeout=2.0)
+            try:
+                if int(float(resp)) & 1:
+                    break
+            except Exception:
+                pass
+
+            if time.time() - t0 > max_wait_s:
+                err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0)
+                raise TimeoutError(f"Spectrum sweep wait exceeded {max_wait_s}s, last error: {err}")
+
+            time.sleep(0.2)
+
+        # 5. 先检查 trace 是否有数据
+        n_resp = self.send_command(f":TRACe:DATA:SNUMber? {trace_name}", expect_response=True, timeout=10.0)
+        n_points = int(float(n_resp))
+        if n_points <= 0:
+            err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0)
+            raise ValueError(f"{trace_name} has no data after sweep. SYST:ERR? -> {err}")
+
+        # 6. 分别读取 X/Y
+        x_resp = self.send_command(f":TRACe:DATA:X? {trace_name}", expect_response=True, timeout=30.0)
+        y_resp = self.send_command(f":TRACe:DATA:Y? {trace_name}", expect_response=True, timeout=30.0)
+
+        x_vals = np.array([float(v) for v in x_resp.split(",") if v.strip()], dtype=float)
+        y_vals = np.array([float(v) for v in y_resp.split(",") if v.strip()], dtype=float)
+
+        if len(x_vals) == 0 or len(y_vals) == 0:
+            raise ValueError("TRACE X/Y data is empty.")
+
+        if len(x_vals) != len(y_vals):
+            raise ValueError(f"TRACE X/Y length mismatch: len(X)={len(x_vals)}, len(Y)={len(y_vals)}")
+
+        wavelengths = x_vals  # unit: m
+        powers = y_vals  # dBm or linear, depends on current instrument level mode
+
+        # 7. 按波长排序
+        sort_idx = np.argsort(wavelengths)
+        wavelengths = wavelengths[sort_idx]
+        powers = powers[sort_idx]
+
+        # 8. 保存 CSV
+        spectrum_csv_path = save_dir_path / f"{basename}.csv"
+        df_spectrum = pd.DataFrame({
+            "wavelength_m": wavelengths,
+            "power": powers
+        })
+        df_spectrum.to_csv(spectrum_csv_path, index=False)
+
+        # 9. 保存图像
+        image_bmp_path = self.save_current_image(
+            save_dir=str(save_dir_path.parent),
+            basename=basename,
+            color=True,
+            fmt="bmp"
+        )
+
+        # 10. 计算峰值和带宽
+        peak_idx = np.argmax(powers)
+        peak_power = float(powers[peak_idx])
+        peak_wavelength = float(wavelengths[peak_idx])
+        c = 299792458.0
+        peak_freq = c / peak_wavelength
+
+        low_3db, high_3db, bw_3db = self._measure_bandwidth(wavelengths, powers, peak_power, 3)
+        low_30db, high_30db, bw_30db = self._measure_bandwidth(wavelengths, powers, peak_power, 30)
+
+        return {
+            "spectrum_csv": str(spectrum_csv_path),
+            "image_bmp": str(image_bmp_path),
+            "peak_power": peak_power,
+            "peak_freq": peak_freq,
+            "3dB_bandwidth": bw_3db,
+            "30dB_bandwidth": bw_30db,
+        }
+
+    def login(self, client):
+        response = self.send_command('OPEN "anonymous"',True)
+        # print(f'设备响应 open anonymous: {response}')
+        response = self.send_command(' ',True)
+        # print(f'设备响应 密码: {response}')
+        response = self.send_command('*STB?',True)
+        # print(f'设备响应 STB: {response}')
+
+    # 支持with语句
+    def __enter__(self):
+        self.tcp_connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
+        return False
+
+def save_current_data(start_freq, end_freq, path_dir='./../data', name_id=1):
     import config as cfg_module
     cfg = cfg_module.get_config()
     with OpticalSpectrumAnalyzer(osa_ip=cfg.device.osa.ip, osa_port=cfg.device.osa.port) as osa:
-        csv_path = osa.save_spectrum_data(
-            start_freq=191.25e12,
-            end_freq=191.35e12,
-            save_dir=path_dir,
-            name_prefix=f'spectrum_{name_id}',
-            resolution_nm=resolution_nm
-        )
-        print("频谱已保存:", csv_path)
-        img_path = osa.save_screen_image(
-            save_dir=path_dir,
-            name_prefix=f'osa_screen_{name_id}'
-        )
-        print("屏幕图像已保存:", img_path)
-    return csv_path, img_path
-
+        osa.auto_sweep(max_wait_s=120)
+        path = osa.save_current_image(save_dir=path_dir, basename="my_capture_" + str(name_id))
+        data = osa.save_spectrum_data(start_freq=start_freq, end_freq=end_freq)
+        print(data)
+        print("Saved to:", path)
+    return
 
 if __name__ == '__main__':
-    save_current_image('../data/spectrum', 1, resolution_nm=0.05)
+    save_current_data(start_freq=191.2e12, end_freq=191.5e12,path_dir='./../data', name_id=1)

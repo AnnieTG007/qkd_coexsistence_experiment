@@ -58,13 +58,13 @@ class TunableLaserSource:
             tls.close()
             rm.close()
         except Exception as e:
-            print('报错')
-            print(e)
-            # 无论如何，释放资源
+            # 释放资源后重新抛出异常
             tls.close()
             rm.close()
+            raise RuntimeError(f"TLS operation failed: {e}") from e
         finally:
-            tls.close()
+            if tls.is_open:
+                tls.close()
             rm.close()
         return
 
@@ -117,13 +117,13 @@ class TunableLaserSource:
             tls.close()
             rm.close()
         except Exception as e:
-            print('报错')
-            print(e)
-            # 无论如何，释放资源
+            # 释放资源后重新抛出异常
             tls.close()
             rm.close()
+            raise RuntimeError(f"TLS operation failed: {e}") from e
         finally:
-            tls.close()
+            if tls.is_open:
+                tls.close()
             rm.close()
         return
 

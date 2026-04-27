@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
+import config as cfg_module
+
 
 class QKDLogRead:
     def __init__(self, update_log=True, time_list=[],
@@ -21,10 +23,12 @@ class QKDLogRead:
         self.log_file_path = log_file_path
         self.log_file_name = log_file_name
         self.data_file_path = data_file_path
-        self.ip = '192.168.1.20'
-        self.port = 56100
-        self.user_name = 'qkd'
-        self.pwd = 'qasky1234'
+        # 从配置加载设备参数
+        cfg = cfg_module.get_config()
+        self.ip = cfg.device.qkd.ip
+        self.port = cfg.device.qkd.port
+        self.user_name = cfg.device.qkd.username
+        self.pwd = cfg.device.qkd.password
 
     def SFTP_Connection(self):
         # 创建 SSHClient 对象
