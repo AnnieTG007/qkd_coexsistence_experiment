@@ -1,0 +1,36 @@
+device:
+  wss:
+    com_power: "COM5"
+    com_control: "COM6"
+    list_att_initial:
+      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+  tls:
+    mtp_ip: "192.168.1.102"
+    iqs_ip: "192.168.1.101"
+
+  osa:
+    ip: "192.168.1.113"
+    port: 10001
+
+  qkd:
+    ip: "192.168.1.20"
+    port: 56100
+    username: "qkd"
+    password: "qasky1234"
+    log_file_path: "log"
+    log_file_name: "qkd.alice-bob.log.0"
+
+experiment:
+  distance: 10000        # m
+  max_power: 13          # dBm
+  actual_power: 13       # dBm
+  buffer_time: 600       # s
+  inv_time: 2400         # s
+  wait_time: 600         # s
+  fq: 193.5e12           # Hz
+  fsyn: 193.3e12         # Hz
+  spacing: 100e9         # Hz
+  num_c: 8
+  raman_file: "simulation/Ramancrosssection25GHz（25GHz间隔）.xls"
