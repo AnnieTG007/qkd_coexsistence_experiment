@@ -4,3 +4,4 @@ from .optical_spectrum_analyzer import save_current_image
 from .wavelength_selective_switch import WavelengthSelectiveSwitch as WSS
 from .QKD_log_read import QKDLogRead as QKD
 from .tunable_laser_source import TunableLaserSource as TLS
+from .SFP_source import TunableSFPController as SFP

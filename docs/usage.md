@@ -23,7 +23,7 @@ QKD_Coexistence/
 ### 基本用法
 
 ```bash
-python main.py
+python main_1.py
 ```
 
 ### 配置实验方案

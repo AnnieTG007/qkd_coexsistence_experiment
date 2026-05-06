@@ -1,5 +1,31 @@
 # QKD Coexistence Experiment
 
+## SFP 可调谐模块使用顺序
+
+SFP 可调谐模块采用“板端 C 固件 + PC 端 Python 控制”的方式接入。Python 不直接访问 SFP 的 I2C/GPIO；低层硬件访问由 Vitis 程序完成，上层实验流程由 Python 通过串口发送 JSON 命令控制。
+
+使用前请按下面顺序操作：
+
+1. 在 Vitis 工程中使用项目内的 `device/sfp.c` 作为 SFP 应用源码。
+2. 基于 `E:\vivado\sfp_project_1` 对应的硬件平台 build 应用程序。
+3. 将 build 出来的 ELF download/run 到 FPGA/SoC 板卡，确保板端串口 JSON 服务已经运行。
+4. 再启动 Python 上位机控制脚本。
+
+Python 示例：
+
+```python
+import device
+
+with device.SFP(transport="serial", serial_port="COM3", baudrate=115200) as sfp:
+    print(sfp.get_module_info())
+    print(sfp.get_channel())
+    sfp.set_channel(10)
+    print(sfp.get_status())
+    print(sfp.get_ddm())
+```
+
+如果 Python 报串口超时或返回不是 JSON，优先检查：板端 ELF 是否已经 download/run、串口号是否正确、Vitis 程序是否使用了 `device/sfp.c` 这份 JSON 服务版本。
+
 QKD 共纤传输实验自动化控制系统。
 
 ## 项目简介
@@ -56,7 +82,7 @@ pip install -r requirements.txt
 ### 3. 运行实验
 
 ```bash
-python main.py
+python main_1.py
 ```
 
 ### 4. 可视化

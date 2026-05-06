@@ -1,7 +1,13 @@
 device:
-  wss:
+  wss1:
     com_power: "COM5"
     com_control: "COM6"
+    list_att_initial:
+      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  wss2:
+    com_power: "COM7"
+    com_control: "COM8"
     list_att_initial:
       - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
       - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -22,6 +28,11 @@ device:
     log_file_path: "log"
     log_file_name: "qkd.alice-bob.log.0"
 
+  ase:
+    port: "COM6"
+    baud: 9600
+    target_power_mw: 100
+
 experiment:
   distance: 10000        # m
   max_power: 13          # dBm
@@ -34,3 +45,11 @@ experiment:
   spacing: 100e9         # Hz
   num_c: 8
   raman_file: "simulation/Ramancrosssection25GHz（25GHz间隔）.xls"
+  repetition: 1          # 实验重复次数
+  spacing_list:
+    - 100000000000        # 信道间隔列表 (Hz)
+  scheme_name_list:      # 实验方案名称列表
+    - "interleave"
+    - "CCA"
+    - "max_SKR"
+    - "stable_SKR"

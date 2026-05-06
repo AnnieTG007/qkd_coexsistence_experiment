@@ -37,11 +37,20 @@ class QKDConfig:
 
 
 @dataclass
+class ASEConfig:
+    port: str
+    baud: int
+    target_power_mw: float
+
+
+@dataclass
 class DeviceConfig:
-    wss: WSSConfig
+    wss1: WSSConfig
+    wss2: WSSConfig
     tls: TLSConfig
     osa: OSAConfig
     qkd: QKDConfig
+    ase: ASEConfig
 
 
 @dataclass
@@ -57,6 +66,9 @@ class ExperimentConfig:
     spacing: float
     num_c: int
     raman_file: str
+    repetition: int
+    spacing_list: List[float]
+    scheme_name_list: List[str]
 
 
 @dataclass
@@ -80,10 +92,15 @@ def load(config_path: str | None = None) -> Config:
 
     return Config(
         device=DeviceConfig(
-            wss=WSSConfig(
-                com_power=device_cfg['wss']['com_power'],
-                com_control=device_cfg['wss']['com_control'],
-                list_att_initial=device_cfg['wss']['list_att_initial'],
+            wss1=WSSConfig(
+                com_power=device_cfg['wss1']['com_power'],
+                com_control=device_cfg['wss1']['com_control'],
+                list_att_initial=device_cfg['wss1']['list_att_initial'],
+            ),
+            wss2=WSSConfig(
+                com_power=device_cfg['wss2']['com_power'],
+                com_control=device_cfg['wss2']['com_control'],
+                list_att_initial=device_cfg['wss2']['list_att_initial'],
             ),
             tls=TLSConfig(
                 mtp_ip=device_cfg['tls']['mtp_ip'],
@@ -101,6 +118,11 @@ def load(config_path: str | None = None) -> Config:
                 log_file_path=device_cfg['qkd']['log_file_path'],
                 log_file_name=device_cfg['qkd']['log_file_name'],
             ),
+            ase=ASEConfig(
+                port=device_cfg['ase']['port'],
+                baud=device_cfg['ase']['baud'],
+                target_power_mw=device_cfg['ase']['target_power_mw'],
+            ),
         ),
         experiment=ExperimentConfig(
             distance=experiment_cfg['distance'],
@@ -114,6 +136,9 @@ def load(config_path: str | None = None) -> Config:
             spacing=experiment_cfg['spacing'],
             num_c=experiment_cfg['num_c'],
             raman_file=experiment_cfg['raman_file'],
+            repetition=experiment_cfg['repetition'],
+            spacing_list=experiment_cfg['spacing_list'],
+            scheme_name_list=experiment_cfg['scheme_name_list'],
         ),
     )
 
