@@ -58,7 +58,6 @@ class ExperimentConfig:
     distance: float
     max_power: float
     actual_power: float
-    buffer_time: int
     inv_time: int
     wait_time: int
     fq: float
@@ -128,7 +127,6 @@ def load(config_path: str | None = None) -> Config:
             distance=experiment_cfg['distance'],
             max_power=experiment_cfg['max_power'],
             actual_power=experiment_cfg['actual_power'],
-            buffer_time=experiment_cfg['buffer_time'],
             inv_time=experiment_cfg['inv_time'],
             wait_time=experiment_cfg['wait_time'],
             fq=experiment_cfg['fq'],

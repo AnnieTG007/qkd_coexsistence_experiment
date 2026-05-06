@@ -3,8 +3,10 @@ import numpy as np
 from itertools import permutations
 from itertools import combinations
 import xlrd
+from pathlib import Path
 
-with xlrd.open_workbook('Ramancrosssection25GHz（25GHz间隔）.xls') as f:
+raman_file = Path(__file__).resolve().parent.parent / 'simulation' / 'Ramancrosssection25GHz（25GHz间隔）.xls'
+with xlrd.open_workbook(str(raman_file)) as f:
     sheet1 = f.sheets()[0]
     sheet1_cols = sheet1.col_values(1)
     coefficient_raman = np.array(sheet1_cols)  # 拉曼散射系数

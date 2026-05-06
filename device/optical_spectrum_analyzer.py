@@ -253,57 +253,95 @@ class OpticalSpectrumAnalyzer:
         return low_freq, high_freq, bandwidth
 
     def save_spectrum_data(self,
-                          start_freq: float,
-                          end_freq: float,
-                          save_dir: str | None = None,
-                          basename: str | None = None,
-                          sweep_points: int | None = None) -> dict:
+                           start_freq: float,
+                           end_freq: float,
+                           save_dir: str | None = None,
+                           basename: str | None = None,
+                           sweep_points: int | None = None) -> dict:
         """
         执行光谱扫描，保存频谱数据、图像，并测量3dB/30dB带宽。
-
-        参数:
-            start_freq: 起始频率 (Hz)，如 191.5e12
-            end_freq: 结束频率 (Hz)，如 193.5e12
-            save_dir: 保存目录，默认为 data/spectrum
-            basename: 文件名前缀，默认为 spectrum_YYYYMMDD_HHMMSS
-            sweep_points: 扫描点数，None 表示使用仪器当前设置
-
-        返回:
-            dict: {
-                'spectrum_csv': str,      # 频谱数据文件路径
-                'image_bmp': str,          # 频谱图像文件路径
-                'bandwidth_csv': str,      # 带宽测量结果文件路径
-                'peak_power': float,       # 峰值功率 (dBm)
-                'peak_freq': float,        # 峰值频率 (Hz)
-                '3dB_bandwidth': float,   # 3dB 带宽 (Hz)
-                '30dB_bandwidth': float,  # 30dB 带宽 (Hz)
-            }
         """
+
+        def _check_osa_error(where: str = ""):
+            err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0).strip()
+            # 无错误通常返回 0 或 0,"No error"
+            if not err.startswith("0"):
+                raise RuntimeError(f"OSA error after {where}: {err}")
+
+        def _parse_ascii_csv_floats(resp: str, name: str) -> np.ndarray:
+            vals = [x.strip() for x in resp.split(",") if x.strip()]
+            if not vals:
+                raise ValueError(f"{name} response is empty.")
+            try:
+                return np.array([float(v) for v in vals], dtype=float)
+            except ValueError as e:
+                raise ValueError(f"{name} contains non-numeric data: {resp[:200]!r}") from e
+
+        def _get_trace_points(trace_name: str) -> int:
+            resp = self.send_command(f":TRACe:DATA:SNUMber? {trace_name}",
+                                     expect_response=True, timeout=10.0).strip()
+            try:
+                return int(float(resp))
+            except ValueError as e:
+                raise ValueError(f"Invalid SNUMBER response for {trace_name}: {resp!r}") from e
+
         if save_dir is None:
-            save_dir_path = Path(__file__).resolve().parent / "data" / "spectrum"
+            save_dir_path = Path(__file__).resolve().parent / "data"
         else:
-            save_dir_path = Path(save_dir).expanduser().resolve() / "spectrum"
+            save_dir_path = Path(save_dir).expanduser().resolve()
+
         save_dir_path.mkdir(parents=True, exist_ok=True)
 
         if basename is None:
             basename = time.strftime("spectrum_%Y%m%d_%H%M%S")
 
-        trace_name = "TRA"
+        preferred_trace = "TRA"
+        all_traces = ["TRA", "TRB", "TRC", "TRD", "TRE", "TRF", "TRG"]
 
-        # 1. 设置扫描范围（按手册全称写法）
+        # 0. 清空旧错误队列
+        try:
+            while True:
+                err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0).strip()
+                if err.startswith("0"):
+                    break
+        except Exception:
+            pass
+
+        # 1. 清空所有旧 trace 数据，避免读到旧波形
+        self.send_command(":TRACe:DELete:ALL", expect_response=False)
+
+        # 2. 设置扫描范围
         self.send_command(f":SENSe:WAVelength:STARt {start_freq}HZ", expect_response=False)
-        self.send_command(f":SENSe:WAVelength:STOP {end_freq}HZ", expect_response=False)
+        _check_osa_error("set start")
 
-        # 2. 设置扫描点数（可选）
+        self.send_command(f":SENSe:WAVelength:STOP {end_freq}HZ", expect_response=False)
+        _check_osa_error("set stop")
+
+        # 3. 设置扫描点数（可选）
         if sweep_points is not None:
             self.send_command(f":SENSe:SWEep:POINts {sweep_points}", expect_response=False)
+            _check_osa_error("set sweep points")
 
-        # 3. 启动扫描
-        self.send_command(":INITiate:SMODe AUTO", expect_response=False)
+        # 4. 尽量把 TRA 设成活动写入曲线
+        self.send_command(f":TRACe:ACTive {preferred_trace}", expect_response=False)
+        _check_osa_error("set active trace")
+
+        self.send_command(f":TRACe:ATTRibute:{preferred_trace} WRITe", expect_response=False)
+        _check_osa_error("set trace attribute write")
+
+        self.send_command(f":TRACe:STATe:{preferred_trace} ON", expect_response=False)
+        _check_osa_error("set trace state on")
+
+        # 5. 单次扫描
+        self.send_command(":INITiate:SMODe SINGle", expect_response=False)
+        _check_osa_error("set single sweep mode")
+
         self.send_command("*CLS", expect_response=False)
-        self.send_command(":INITiate", expect_response=False)
 
-        # 4. 等待扫描完成
+        self.send_command(":INITiate", expect_response=False)
+        _check_osa_error("start sweep")
+
+        # 6. 等待扫描完成
         t0 = time.time()
         max_wait_s = 120.0
         while True:
@@ -320,63 +358,117 @@ class OpticalSpectrumAnalyzer:
 
             time.sleep(0.2)
 
-        # 5. 先检查 trace 是否有数据
-        n_resp = self.send_command(f":TRACe:DATA:SNUMber? {trace_name}", expect_response=True, timeout=10.0)
-        n_points = int(float(n_resp))
-        if n_points <= 0:
-            err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0)
-            raise ValueError(f"{trace_name} has no data after sweep. SYST:ERR? -> {err}")
+        # 7. 查询当前活动曲线
+        active_trace = self.send_command(":TRACe:ACTive?", expect_response=True, timeout=5.0).strip()
 
-        # 6. 分别读取 X/Y
-        x_resp = self.send_command(f":TRACe:DATA:X? {trace_name}", expect_response=True, timeout=30.0)
-        y_resp = self.send_command(f":TRACe:DATA:Y? {trace_name}", expect_response=True, timeout=30.0)
+        # 8. 查询所有 trace 的数据点数，找真正有数据的那条
+        trace_points = {}
+        selected_trace = None
+        for tr in all_traces:
+            try:
+                n = _get_trace_points(tr)
+            except Exception:
+                n = -1
+            trace_points[tr] = n
+            if selected_trace is None and n > 0:
+                selected_trace = tr
 
-        x_vals = np.array([float(v) for v in x_resp.split(",") if v.strip()], dtype=float)
-        y_vals = np.array([float(v) for v in y_resp.split(",") if v.strip()], dtype=float)
+        # 优先用 TRA；如果 TRA 没数据，但别的 trace 有数据，就自动切换
+        if trace_points.get(preferred_trace, 0) > 0:
+            selected_trace = preferred_trace
 
-        if len(x_vals) == 0 or len(y_vals) == 0:
-            raise ValueError("TRACE X/Y data is empty.")
+        if selected_trace is None:
+            err = self.send_command(":SYST:ERR?", expect_response=True, timeout=2.0).strip()
+            raise ValueError(
+                f"No trace has data after sweep. active_trace={active_trace}, "
+                f"trace_points={trace_points}, SYST:ERR? -> {err}"
+            )
 
-        if len(x_vals) != len(y_vals):
-            raise ValueError(f"TRACE X/Y length mismatch: len(X)={len(x_vals)}, len(Y)={len(y_vals)}")
+        # 9. 读取真正有数据的 trace 前，强制设为 ASCII 格式
+        # self.send_command(":FORMat:DATA ASCii", expect_response=False)
+        # _check_osa_error("set data format ascii")
 
-        wavelengths = x_vals  # unit: m
-        powers = y_vals  # dBm or linear, depends on current instrument level mode
+        x_resp = self.send_command(f":TRACe:DATA:X? {selected_trace}",
+                                   expect_response=True, timeout=30.0)
+        y_resp = self.send_command(f":TRACe:DATA:Y? {selected_trace}",
+                                   expect_response=True, timeout=30.0)
 
-        # 7. 按波长排序
+        # 可选调试输出
+        print("X head:", repr(x_resp[:120]))
+        print("Y head:", repr(y_resp[:120]))
+
+        wavelengths = _parse_ascii_csv_floats(x_resp, f"{selected_trace} X")  # 单位 m
+        powers = _parse_ascii_csv_floats(y_resp, f"{selected_trace} Y")
+
+        if len(wavelengths) != len(powers):
+            raise ValueError(
+                f"{selected_trace} X/Y length mismatch: len(X)={len(wavelengths)}, len(Y)={len(powers)}"
+            )
+
+        if len(wavelengths) == 0:
+            raise ValueError(f"{selected_trace} parsed data is empty.")
+
+        # 10. 排序
         sort_idx = np.argsort(wavelengths)
         wavelengths = wavelengths[sort_idx]
         powers = powers[sort_idx]
 
-        # 8. 保存 CSV
+        # 11. 保存频谱数据 CSV
         spectrum_csv_path = save_dir_path / f"{basename}.csv"
         df_spectrum = pd.DataFrame({
+            "trace": [selected_trace] * len(wavelengths),
             "wavelength_m": wavelengths,
             "power": powers
         })
         df_spectrum.to_csv(spectrum_csv_path, index=False)
 
-        # 9. 保存图像
+        # 12. 保存频谱图像
         image_bmp_path = self.save_current_image(
-            save_dir=str(save_dir_path.parent),
+            save_dir=str(save_dir_path),
             basename=basename,
             color=True,
             fmt="bmp"
         )
 
-        # 10. 计算峰值和带宽
+        # 13. 计算带宽
         peak_idx = np.argmax(powers)
         peak_power = float(powers[peak_idx])
         peak_wavelength = float(wavelengths[peak_idx])
+
         c = 299792458.0
         peak_freq = c / peak_wavelength
 
-        low_3db, high_3db, bw_3db = self._measure_bandwidth(wavelengths, powers, peak_power, 3)
-        low_30db, high_30db, bw_30db = self._measure_bandwidth(wavelengths, powers, peak_power, 30)
+        low_3db, high_3db, bw_3db = self._measure_bandwidth(
+            wavelengths, powers, peak_power, 3
+        )
+        low_30db, high_30db, bw_30db = self._measure_bandwidth(
+            wavelengths, powers, peak_power, 30
+        )
+
+        # 14. 保存带宽结果 CSV
+        bandwidth_csv_path = save_dir_path / f"{basename}_bandwidth.csv"
+        df_bw = pd.DataFrame([{
+            "trace": selected_trace,
+            "active_trace_after_sweep": active_trace,
+            "peak_power": peak_power,
+            "peak_wavelength_m": peak_wavelength,
+            "peak_freq_hz": peak_freq,
+            "3dB_low_freq_hz": low_3db,
+            "3dB_high_freq_hz": high_3db,
+            "3dB_bandwidth_hz": bw_3db,
+            "30dB_low_freq_hz": low_30db,
+            "30dB_high_freq_hz": high_30db,
+            "30dB_bandwidth_hz": bw_30db,
+        }])
+        df_bw.to_csv(bandwidth_csv_path, index=False)
 
         return {
+            "trace_used": selected_trace,
+            "active_trace_after_sweep": active_trace,
+            "trace_points": trace_points,
             "spectrum_csv": str(spectrum_csv_path),
             "image_bmp": str(image_bmp_path),
+            "bandwidth_csv": str(bandwidth_csv_path),
             "peak_power": peak_power,
             "peak_freq": peak_freq,
             "3dB_bandwidth": bw_3db,

@@ -3,14 +3,22 @@ device:
     com_power: "COM5"
     com_control: "COM6"
     list_att_initial:
-      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - # device 1 (MUX): com_port 1, 2 各自的 20 个 switch_port 衰减补偿
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - # device 2 (DEMUX)
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   wss2:
     com_power: "COM7"
     com_control: "COM8"
     list_att_initial:
-      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-      - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - # device 1 (MUX)
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      - # device 2 (DEMUX)
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   tls:
     mtp_ip: "192.168.1.102"
@@ -37,12 +45,11 @@ experiment:
   distance: 10000        # m
   max_power: 13          # dBm
   actual_power: 13       # dBm
-  buffer_time: 600       # s
   inv_time: 2400         # s
   wait_time: 600         # s
-  fq: 193.5e12           # Hz
-  fsyn: 193.3e12         # Hz
-  spacing: 100e9         # Hz
+  fq: 193.5e+12          # Hz
+  fsyn: 193.3e+12        # Hz
+  spacing: 100.0e+9      # Hz
   num_c: 8
   raman_file: "simulation/Ramancrosssection25GHz（25GHz间隔）.xls"
   repetition: 1          # 实验重复次数

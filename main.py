@@ -1,3 +1,4 @@
+import random
 import xlrd
 import numpy as np
 import datetime
@@ -6,8 +7,12 @@ from openpyxl import Workbook
 from pathlib import Path
 import config
 from config import Config
+from device.wavelength_selective_switch import WavelengthSelectiveSwitch
+from device.ASE_source import ASESource
+from device.optical_spectrum_analyzer import OpticalSpectrumAnalyzer
+from device.QKD_log_read import QKDLogRead
 from tools.count_down import countdown
-import device
+from simulation import BB84_SKR_infinite as SKR_simulation
 
 # ————————全局常数区————————
 # 光纤长度（单位：m）
@@ -26,9 +31,9 @@ def init_wss(cfg:Config):
     # 定义wss初始端口衰减（全部为0）
     list_att_initial = np.array(cfg.device.wss1.list_att_initial)
     # 定义wss对象
-    wss = device.WSS(cfg.device.wss1.com_power, cfg.device.wss1.com_control, list_att_initial)
+    wss = WavelengthSelectiveSwitch(com_power=cfg.device.wss1.com_power, com_control=cfg.device.wss1.com_control, list_att=list_att_initial)
     # wss设备开机
-    response = wss.wsspower('on')
+    response = wss.wsspower(set='on')
     # 如果开机异常，打印返回信息
     if 'OK' not in response:
         print(response)
@@ -46,24 +51,24 @@ def init_wss(cfg:Config):
 
 def init_ase(cfg:Config):
     ase_settings = cfg.device.ase
-    ase = device.ASE(ase_settings.port, ase_settings.baud)
-    ase.set_target_power_mw(ase_settings.target_power_mw)
+    ase = ASESource(port=ase_settings.port, baud=ase_settings.baud)
+    ase.set_target_power_mw(power_mw=ase_settings.target_power_mw)
     return ase
 
-def init_tls(cfg=config.get_config()):
-    # 初始化TLS过程
-    tls = device.TLS(cfg.device.tls.mtp_ip, cfg.device.tls.iqs_ip)
-    # tls所用的端口号
-    tls_port = np.arange(1, num_c + 1)
-    # TLS设备开机
-    for j in tls_port:
-        tls.set_on_and_off(j, 'ON')
-    return tls
-
 def enum_exp_scheme(cfg: Config):
-    scheme_list = []
+    """
+    枚举实验方案。
 
-    import random
+    根据配置中的信道名称列表、信道间隔和重复次数，
+    随机打乱方案顺序后生成所有待执行的实验方案组合。
+
+    Args:
+        cfg: 实验配置对象
+
+    Returns:
+        list[dict]: 实验方案列表，每个方案包含 name, list_frequency, spacing, title
+    """
+    scheme_list = []
     spacing_list = np.array(cfg.experiment.spacing_list)
     scheme_name_list = []
 
@@ -83,26 +88,41 @@ def enum_exp_scheme(cfg: Config):
             scheme_list.append(s)
     return scheme_list
 
-def main_control(debug_mode:bool = True, num_c:int = 3):
-    cfg = config.get_config()
-    action_time = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-    scheme_list = enum_exp_scheme(cfg)
+def exe_exp_scheme(cfg: Config, scheme_list: list, wss: WavelengthSelectiveSwitch, ase: ASESource, debug_mode: bool = False):
+    """
+    执行实验方案。
 
-    # 初始化wss对象
-    wss = init_wss(cfg)
-    ase = init_ase(cfg)
+    遍历所有实验方案，依次配置 WSS 进行经典信道波长分配，
+    采集 QKD 安全密钥率数据和 OSA 频谱图像，并将结果保存至 Excel 文件。
 
-
+    Args:
+        cfg: 实验配置对象
+        scheme_list: 由 enum_exp_scheme 生成的实验方案列表
+        wss: 已初始化的 WSS 设备对象
+        ase: 已初始化的 ASE 设备对象
+        debug_mode: 是否输出调试信息，默认 False
+    """
+    num_c = cfg.experiment.num_c
+    # WSS com_port=1 时可用偶数端口，端口2已用于量子/同步信道
+    wss_port = np.array([4, 6, 8, 10, 12, 14, 16, 18])[:num_c]
+    max_power = cfg.experiment.max_power
+    actual_power = cfg.experiment.actual_power
+    inv_time = cfg.experiment.inv_time
+    spacing_list = np.array(cfg.experiment.spacing_list)
 
     # 数据保存
     wb = Workbook()
     sheet = wb.active
     sheet.title = '经典-量子共纤传输实验结果'
 
-    # 开始进行信道分配方案，注意要打时间戳
+    # 创建实验根目录（按实验参数命名）
+    dir_name = 'data/' + str(spacing_list / 1e9) + 'GHz ' + str(num_c) + 'channel ' + str(
+        actual_power) + 'dBm'
+    dir_path = Path(__file__).resolve().parent / dir_name
+    dir_path.mkdir(parents=True, exist_ok=True)
     # 开始逐个执行预设方案
-    for i in range(len(list_scheme)):
-        s = list_scheme[i]
+    for i in range(len(scheme_list)):
+        s = scheme_list[i]
         scheme_name = s['name']
         classical_channel_array = s['list_frequency']
         spacing = s['spacing']
@@ -110,28 +130,23 @@ def main_control(debug_mode:bool = True, num_c:int = 3):
             print('scheme_name: ', scheme_name)
             if scheme_name != 'None':
                 print(classical_channel_array)
-                print('SKR, QBER: ', SKR_simulation(classical_channel_array))
+                print('SKR, QBER: ', SKR_simulation(distance=cfg.experiment.distance, noise_after_spd=0))
 
-        # 执行每个方案前，先阻塞所有的端口
-        wss1.wss_spa(1, 1, 772, 1, 99, 0)
+        # 执行每个方案前，先阻塞所有的端口，相当于让QKD系统空跑
+        wss.wss_spa(num_device=1, begin_slot=1, end_slot=772, com_port=1, switch_port=99, att=0)
 
         if scheme_name != 'None':
-            # 设置经典信号波长，设置TLS和WSS
+            # 设置经典信号波长，设置WSS
             for j in range(len(classical_channel_array)):
                 # 获取经典信号频率
                 f = classical_channel_array[j]
-                # TLS设置
-                tls1.setFrequencyAndPower(tls_port[j], f, MAX_POWER)
                 # WSS设置
-                num_device = 1
-                num_comPort = 1
-                wss1.wss_spa_bandwidth(1, f, 20e9, 1, wss_port[j], max(0, MAX_POWER - ACTUAL_POWER))
-                # wss1.wss_spa(1, 1, 772, 1, wss_port[j], max(0, MAX_POWER - ACTUAL_POWER))
+                wss.wss_spa_bandwidth(num_device=1, frequency=f, bandwidth=20e9, com_port=1, switch_port=wss_port[j], att=max(0, max_power - actual_power))
 
         # 给QKD系统恢复时间
         if debug_mode:
             print('调试信息：QKD系统恢复中')
-        time.sleep(BUFFER_TIME)
+        time.sleep(inv_time)
         if debug_mode:
             print('调试信息：QKD系统恢复完成')
 
@@ -145,7 +160,7 @@ def main_control(debug_mode:bool = True, num_c:int = 3):
         s['begin_time'] = begin_time.strftime('%Y-%m-%d %H:%M:%S')
 
         # 静态方案执行过程
-        countdown(INV_TIME)
+        countdown(cd_time=inv_time)
 
         # 记录方案结束的时间戳
         end_time = datetime.datetime.now()
@@ -153,38 +168,53 @@ def main_control(debug_mode:bool = True, num_c:int = 3):
         if debug_mode:
             print(['结束 ', s['title']])
 
-        time.sleep(BUFFER_TIME)
+        time.sleep(inv_time)
 
         # 保存实验结果
-        dir_name = 'data/' + str(spacing_list / 1e9) + 'GHz ' + str(num_c) + 'channel ' + str(
-            ACTUAL_POWER) + 'dBm ' + action_time
-        dir_path = Path(__file__).resolve().parent / dir_name
-        dir_path.mkdir(parents=True, exist_ok=True)
-        # 保存OSA图像
-        device.save_current_image(dir_path, i + 1)
+        # 为当前方案创建子文件夹（编号+方案名称+信道间隔）
+        scheme_folder = f"{i + 1}_{scheme_name}_{spacing}GHz"
+        scheme_dir = dir_path / scheme_folder
+        scheme_dir.mkdir(parents=True, exist_ok=True)
+        # 保存OSA频谱数据及图像（频率范围：量子信道频率 ± 1THz）
+        start_freq = cfg.experiment.fq - 1e12
+        end_freq = cfg.experiment.fq + 1e12
+        scheme_basename = f"scheme_{i + 1}_{scheme_name}_{spacing}GHz"
+        with OpticalSpectrumAnalyzer(osa_ip=cfg.device.osa.ip, osa_port=cfg.device.osa.port) as osa:
+            osa.save_spectrum_data(start_freq=start_freq, end_freq=end_freq,
+                                   save_dir=str(scheme_dir), basename=scheme_basename)
 
         # 从QKD设备获取SKR数据
         log_file_path = Path(__file__).resolve().parent / 'log'
         log_file_name = 'qkd.alice-bob.log.0'
         scheme_time_list = [(begin_time, end_time)]
-        qkd = device.QKD(update_log=True, time_list=scheme_time_list, log_file_path=log_file_path,
-                         log_file_name=log_file_name, data_file_path=dir_path)
-        mean_skr = qkd.get_skr_list(i + 1)[0]
-        qkd.get_key_and_qber(i + 1)
+        qkd = QKDLogRead(update_log=True, time_list=scheme_time_list, log_file_path=log_file_path,
+                         log_file_name=log_file_name, data_file_path=scheme_dir)
+        mean_skr = qkd.get_skr_list(id=i + 1)[0]
+        qkd.get_key_and_qber(id=i + 1)
 
         # 保存当前方案数据
-        s = list_scheme[i]
         sheet.append([i + 1, s['title']])
         sheet.append(['', 'begin_time', s['begin_time']])
         sheet.append(['', 'end_time', s['end_time']])
-        sheet.append(['', 'power(dBm)', ACTUAL_POWER])
-        sheet.append(['', 'distance(km)', DISTANCE])
+        sheet.append(['', 'power(dBm)', actual_power])
+        sheet.append(['', 'distance(km)', cfg.experiment.distance / 1000])
         sheet.append(['', 'spacing(GHz)', s['spacing']])
         sheet.append(['', 'secure key rate(bps)', mean_skr])
         sheet.append(['', 'list_frequency'] + s['list_frequency'].tolist())
         wb.save(dir_path / 'data.xlsx')
 
     print('——所有数据保存完成——')
+    return
+
+def main_control(debug_mode: bool = False):
+    cfg = config.get_config()
+    scheme_list = enum_exp_scheme(cfg)
+    # 初始化wss对象
+    wss = init_wss(cfg)
+    # 初始化ase对象
+    ase = init_ase(cfg)
+    # 执行实验方案
+    exe_exp_scheme(cfg, scheme_list, wss, ase, debug_mode)
     return
 
 if __name__ == "__main__":
