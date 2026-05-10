@@ -12,8 +12,9 @@ try:
 except ImportError:
     serial = None
 
+from scipy import constants
 
-C_LIGHT = 299792458.0  # m/s
+C_LIGHT = constants.c  # m/s
 
 
 class TunableSFPError(RuntimeError):

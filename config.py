@@ -44,6 +44,21 @@ class ASEConfig:
 
 
 @dataclass
+class SFPConfig:
+    transport: str
+    serial_port: str
+    baudrate: int
+
+
+@dataclass
+class LightSourceConfig:
+    type: str
+    tls_bandwidth: float
+    sfp_bandwidth: float
+    otn_bandwidth: float
+
+
+@dataclass
 class DeviceConfig:
     wss1: WSSConfig
     wss2: WSSConfig
@@ -51,6 +66,7 @@ class DeviceConfig:
     osa: OSAConfig
     qkd: QKDConfig
     ase: ASEConfig
+    sfp: SFPConfig
 
 
 @dataclass
@@ -68,6 +84,7 @@ class ExperimentConfig:
     repetition: int
     spacing_list: List[float]
     scheme_name_list: List[str]
+    light_source: LightSourceConfig
 
 
 @dataclass
@@ -122,6 +139,11 @@ def load(config_path: str | None = None) -> Config:
                 baud=device_cfg['ase']['baud'],
                 target_power_mw=device_cfg['ase']['target_power_mw'],
             ),
+            sfp=SFPConfig(
+                transport=device_cfg['sfp']['transport'],
+                serial_port=device_cfg['sfp']['serial_port'],
+                baudrate=device_cfg['sfp']['baudrate'],
+            ),
         ),
         experiment=ExperimentConfig(
             distance=experiment_cfg['distance'],
@@ -137,6 +159,12 @@ def load(config_path: str | None = None) -> Config:
             repetition=experiment_cfg['repetition'],
             spacing_list=experiment_cfg['spacing_list'],
             scheme_name_list=experiment_cfg['scheme_name_list'],
+            light_source=LightSourceConfig(
+                type=experiment_cfg['light_source']['type'],
+                tls_bandwidth=experiment_cfg['light_source']['tls_bandwidth'],
+                sfp_bandwidth=experiment_cfg['light_source']['sfp_bandwidth'],
+                otn_bandwidth=experiment_cfg['light_source']['otn_bandwidth'],
+            ),
         ),
     )
 

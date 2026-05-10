@@ -41,6 +41,11 @@ device:
     baud: 9600
     target_power_mw: 100
 
+  sfp:
+    transport: "serial"
+    serial_port: "COM3"
+    baudrate: 115200
+
 experiment:
   distance: 10000        # m
   max_power: 13          # dBm
@@ -60,3 +65,8 @@ experiment:
     - "CCA"
     - "max_SKR"
     - "stable_SKR"
+  light_source:
+    type: "TLS"              # TLS | SFP | OTN
+    tls_bandwidth: 20.0e+9   # Hz
+    sfp_bandwidth: 20.0e+9   # Hz (OSA光谱图实测99%功率带宽)
+    otn_bandwidth: 45.0e+9   # Hz (OSA光谱图实测99%功率带宽)
