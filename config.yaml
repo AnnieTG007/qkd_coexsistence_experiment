@@ -46,6 +46,12 @@ device:
     serial_port: "COM3"
     baudrate: 115200
 
+  wss_port:
+    quantum: 2
+    real_source: 4
+    ase_source: 6
+    wdm_classical: 8
+
 experiment:
   distance: 10000        # m
   max_power: 13          # dBm
@@ -70,3 +76,6 @@ experiment:
     tls_bandwidth: 20.0e+9   # Hz
     sfp_bandwidth: 20.0e+9   # Hz (OSA光谱图实测99%功率带宽)
     otn_bandwidth: 45.0e+9   # Hz (OSA光谱图实测99%功率带宽)
+    tls_max_count: 8
+    sfp_max_count: 1
+    otn_max_count: 1

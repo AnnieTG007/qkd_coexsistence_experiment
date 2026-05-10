@@ -4,7 +4,7 @@
 import yaml
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 
 @dataclass
@@ -56,6 +56,9 @@ class LightSourceConfig:
     tls_bandwidth: float
     sfp_bandwidth: float
     otn_bandwidth: float
+    tls_max_count: int
+    sfp_max_count: int
+    otn_max_count: int
 
 
 @dataclass
@@ -67,6 +70,7 @@ class DeviceConfig:
     qkd: QKDConfig
     ase: ASEConfig
     sfp: SFPConfig
+    wss_port: Dict[str, int]
 
 
 @dataclass
@@ -144,6 +148,7 @@ def load(config_path: str | None = None) -> Config:
                 serial_port=device_cfg['sfp']['serial_port'],
                 baudrate=device_cfg['sfp']['baudrate'],
             ),
+            wss_port=device_cfg['wss_port'],
         ),
         experiment=ExperimentConfig(
             distance=experiment_cfg['distance'],
@@ -164,6 +169,9 @@ def load(config_path: str | None = None) -> Config:
                 tls_bandwidth=experiment_cfg['light_source']['tls_bandwidth'],
                 sfp_bandwidth=experiment_cfg['light_source']['sfp_bandwidth'],
                 otn_bandwidth=experiment_cfg['light_source']['otn_bandwidth'],
+                tls_max_count=experiment_cfg['light_source']['tls_max_count'],
+                sfp_max_count=experiment_cfg['light_source']['sfp_max_count'],
+                otn_max_count=experiment_cfg['light_source']['otn_max_count'],
             ),
         ),
     )

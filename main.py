@@ -30,6 +30,8 @@ def classical_signal_array(cfg: Config):
 def init_wss(cfg:Config):
     # 定义wss初始端口衰减（全部为0）
     list_att_initial = np.array(cfg.device.wss1.list_att_initial)
+    # 定义wss端口设置
+    wss_port = cfg.device.wss_port
     # 定义wss对象
     wss = WavelengthSelectiveSwitch(com_power=cfg.device.wss1.com_power, com_control=cfg.device.wss1.com_control, list_att=list_att_initial)
     # wss设备开机
@@ -47,9 +49,11 @@ def init_wss(cfg:Config):
             wss.wss_spa(num_device=device_id, begin_slot=1, end_slot=772, com_port=com_id,  switch_port=99, att=0)
 
     # 将量子信道所在的1号设备2号端口对应量子信道和同步信道频率衰减修改为0
-    for i in range(1, 3):
-        wss.wss_spa_bandwidth(num_device=1, frequency=cfg.experiment.fq, bandwidth=20e9, com_port=i, switch_port=2, att=0)
-        wss.wss_spa_bandwidth(num_device=1, frequency=cfg.experiment.fsyn, bandwidth=100e9, com_port=i,  switch_port=2, att=0)
+    for com_id in range(1, 3):
+        wss.wss_spa_bandwidth(num_device=1, frequency=cfg.experiment.fq, bandwidth=20e9, com_port=com_id,
+                              switch_port=wss_port['quantum'], att=0)
+        wss.wss_spa_bandwidth(num_device=1, frequency=cfg.experiment.fsyn, bandwidth=100e9, com_port=com_id,
+                              switch_port=wss_port['quantum'], att=0)
 
     return wss
 
@@ -128,13 +132,12 @@ def exe_exp_scheme(cfg: Config, scheme_list: list, wss: WavelengthSelectiveSwitc
     """
     num_c = cfg.experiment.num_c
     actual_power = cfg.experiment.actual_power
-    spacing_list = np.array(cfg.experiment.spacing_list)
 
     wb = Workbook()
     sheet = wb.active
     sheet.title = '经典-量子共纤传输实验结果'
 
-    dir_name = 'data/' + str(spacing_list / 1e9) + 'GHz ' + str(num_c) + 'channel ' + str(actual_power) + 'dBm'
+    dir_name = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     dir_path = Path(__file__).resolve().parent / dir_name
     dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -169,7 +172,7 @@ def exe_exp_single_scheme(cfg: Config, s: dict, i: int, wss: WavelengthSelective
         ase: ASE 设备对象（SFP/OTN 模式时需要）
     """
     num_c = cfg.experiment.num_c
-    wss_port = {'quantum': 2, 'real_source': 4, 'ase_source': 6}
+    wss_port = cfg.device.wss_port
     max_power = cfg.experiment.max_power
     actual_power = cfg.experiment.actual_power
 
@@ -196,42 +199,71 @@ def exe_exp_single_scheme(cfg: Config, s: dict, i: int, wss: WavelengthSelective
             raise ValueError(f"不支持的光源类型: {light_source_type}")
 
         num_channels = len(classical_channel_array)
-        main_idx = (num_channels - 1) // 2 if num_channels > 0 else 0
+        fq = cfg.experiment.fq
 
-        # —— 光源控制 ——
+        # 按距离量子信道远近排序，距离相同时优先低频
+        sorted_indices = sorted(
+            range(num_channels),
+            key=lambda i: (abs(classical_channel_array[i] - fq), classical_channel_array[i])
+        )
+
+        # 真实光源数量上限
         if light_source_type == 'TLS':
-            for j in range(num_channels):
-                f = classical_channel_array[j]
-                tls.setFrequencyAndPower(j + 1, f, actual_power)
-                tls.set_on_and_off(j + 1, 'ON')
+            max_count = cfg.experiment.light_source.tls_max_count
         elif light_source_type == 'SFP':
-            main_freq = classical_channel_array[main_idx]
-            wavelength_nm = (C_LIGHT / main_freq) * 1e9
-            sfp.set_wavelength_nm(wavelength_nm)
-            sfp.enable_tx()
-            if num_channels > 1:
-                ase.set_target_power_mw(cfg.device.ase.target_power_mw)
+            max_count = cfg.experiment.light_source.sfp_max_count
         elif light_source_type == 'OTN':
-            main_freq = classical_channel_array[main_idx]
-            user_input = input(
-                f"OTN设备需手动设置，请将主信道频率设为 {main_freq / 1e12:.4f} THz 后"
-                f"输入 y 继续，输入 n 终止进程: "
-            )
-            if user_input.lower() != 'y':
-                print("用户终止进程")
-                return
-            if num_channels > 1:
-                ase.set_target_power_mw(cfg.device.ase.target_power_mw)
+            max_count = cfg.experiment.light_source.otn_max_count
+        else:
+            raise ValueError(f"不支持的光源类型: {light_source_type}")
 
-        # —— WSS 配置所有经典信道并加衰减 ——
-        for j in range(num_channels):
-            f = classical_channel_array[j]
-            wss.wss_spa_bandwidth(num_device=1, frequency=f, bandwidth=bandwidth, com_port=1,
-                                   switch_port=wss_port[j], att=max(0, max_power - actual_power))
+        real_indices = set(sorted_indices[:max_count])  # 前 max_count 个用真实光源
 
-        # 对于经典信道
-        wss.wss_spa_bandwidth(num_device=1, frequency=f, bandwidth=bandwidth, com_port=1,
-                              switch_port=wss_port[j], att=max(0, max_power - actual_power))
+        # 对经典侧的量子频率阻塞以增加隔离度（全局操作，移至循环外）
+        wss.wss_spa_bandwidth(num_device=2, frequency=cfg.experiment.fq, bandwidth=20e9, com_port=1,
+                              switch_port=99, att=0)
+        wss.wss_spa_bandwidth(num_device=2, frequency=cfg.experiment.fsyn, bandwidth=100e9, com_port=1,
+                              switch_port=99, att=0)
+
+        # —— 真实光源配置 ——
+        for j in range(max_count):
+            idx = sorted_indices[j]
+            fc = classical_channel_array[idx]
+
+            # 打通经典信道（暂时设定为0衰减，通过电光衰来调控）
+            for com_id in range(1, 3):
+                wss.wss_spa_bandwidth(num_device=2, frequency=fc, bandwidth=bandwidth, com_port=com_id,
+                                      switch_port=wss_port['real_source'], att=0)
+                wss.wss_spa_bandwidth(num_device=1, frequency=fc, bandwidth=bandwidth, com_port=com_id,
+                                      switch_port=wss_port['wdm_classical'], att=0)
+
+            # —— 真实光源控制 ——
+            if light_source_type == 'TLS':
+                tls.setFrequencyAndPower(j + 1, fc, actual_power)
+                tls.set_on_and_off(j + 1, 'ON')
+            elif light_source_type == 'SFP':
+                wavelength_nm = (C_LIGHT / fc) * 1e9
+                sfp.set_wavelength_nm(wavelength_nm)
+                sfp.enable_tx()
+            elif light_source_type == 'OTN':
+                user_input = input(
+                    f"OTN设备需手动设置，请将信道频率设为 {fc / 1e12:.4f} THz 后"
+                    f"输入 y 继续，输入 n 终止进程: "
+                )
+                if user_input.lower() != 'y':
+                    print("用户终止进程")
+                    return
+
+        # —— 超出真实光源数量的信道全部用 ASE 假光 ——
+        if num_channels > max_count:
+            ase.set_target_power_mw(cfg.device.ase.target_power_mw)
+
+        # —— ASE 假光 WSS 配置 ——
+        for j in range(max_count, num_channels):
+            idx = sorted_indices[j]
+            fc = classical_channel_array[idx]
+            wss.wss_spa_bandwidth(num_device=2, frequency=fc, bandwidth=bandwidth, com_port=1,
+                                   switch_port=wss_port['ase_source'], att=0)
 
     # 给QKD系统恢复时间
     inv_time = cfg.experiment.inv_time
@@ -262,12 +294,12 @@ def exe_exp_single_scheme(cfg: Config, s: dict, i: int, wss: WavelengthSelective
     time.sleep(inv_time)
 
     # 为当前方案创建子文件夹并保存OSA频谱数据
-    scheme_folder = f"{i + 1}_{scheme_name}_{spacing}GHz"
+    scheme_folder = f"{i + 1}_{scheme_name}_{spacing}GHz_{actual_power}dBm"
     scheme_dir = dir_path / scheme_folder
     scheme_dir.mkdir(parents=True, exist_ok=True)
     start_freq = cfg.experiment.fq - 1e12
     end_freq = cfg.experiment.fq + 1e12
-    scheme_basename = f"scheme_{i + 1}_{scheme_name}_{spacing}GHz"
+    scheme_basename = f"scheme_{i + 1}_{scheme_name}_{spacing}GHz_{actual_power}dBm"
     with OpticalSpectrumAnalyzer(osa_ip=cfg.device.osa.ip, osa_port=cfg.device.osa.port) as osa:
         osa.save_spectrum_data(start_freq=start_freq, end_freq=end_freq,
                                save_dir=str(scheme_dir), basename=scheme_basename)
